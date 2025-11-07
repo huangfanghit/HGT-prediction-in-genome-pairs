@@ -1,0 +1,106 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_curve, auc
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier
+import numpy as np
+
+file_path = "your_directory_path_here"
+
+labels = pd.read_csv(f'{file_path}/labels.csv')
+features = pd.read_csv(f'{file_path}/filtered_features_top_1000.csv')
+
+X = features
+y = labels['HGT']
+
+print(X.isnull().sum())
+print(y.isnull().sum())
+
+models = {
+    "Logistic Regression": LogisticRegression(max_iter=1000),
+    "Random Forest": RandomForestClassifier(n_estimators=50, verbose=2, n_jobs=8),
+    "KNN": KNeighborsClassifier(n_neighbors=5),
+    "LightGBM": LGBMClassifier(verbose=-1),
+    "XGBoost": XGBClassifier(eval_metric='logloss', use_label_encoder=False),
+    "Neural Network": MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000),
+    "AdaBoost": AdaBoostClassifier(),
+    "CatBoost": CatBoostClassifier(verbose=0)
+}
+
+n_seeds = 5
+test_size = 0.2
+
+auc_values = {model_name: [] for model_name in models.keys()}
+roc_data = {model_name: {"fpr": [], "tpr": [], "auc": []} for model_name in models.keys()}
+
+for seed in range(n_seeds):
+    print(f"Training with random seed {seed}...")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=seed)
+
+    for model_name, model in models.items():
+        print(f"Training {model_name}...")
+        model.fit(X_train, y_train)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+
+        fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+        roc_auc = auc(fpr, tpr)
+
+        roc_data[model_name]["fpr"].append(fpr)
+        roc_data[model_name]["tpr"].append(tpr)
+        roc_data[model_name]["auc"].append(roc_auc)
+        auc_values[model_name].append(roc_auc)
+
+        print(f"{model_name} AUC: {roc_auc:.4f}")
+
+auc_avg = {model_name: np.mean(auc_list) for model_name, auc_list in auc_values.items()}
+auc_max = {model_name: np.max(auc_list) for model_name, auc_list in auc_values.items()}
+
+print("\nAverage AUC:")
+for model_name, avg in auc_avg.items():
+    print(f"{model_name}: {avg:.4f}")
+
+print("\nMax AUC:")
+for model_name, max_val in auc_max.items():
+    print(f"{model_name}: {max_val:.4f}")
+
+plt.figure(figsize=(10, 8))
+for model_name, data in roc_data.items():
+    mean_fpr = np.linspace(0, 1, 100)
+    tprs = []
+    for i in range(n_seeds):
+        fpr = data["fpr"][i]
+        tpr = data["tpr"][i]
+        tprs.append(np.interp(mean_fpr, fpr, tpr))
+    mean_tpr = np.mean(tprs, axis=0)
+    mean_auc = auc(mean_fpr, mean_tpr)
+    plt.plot(mean_fpr, mean_tpr, label=f'{model_name} (Avg AUC = {mean_auc:.4f})')
+
+plt.plot([0, 1], [0, 1], 'k--', label='Random Guess')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curves (Average AUC)')
+plt.legend(loc='lower right')
+plt.savefig(f'{file_path}/roc_curves_avg.pdf')
+plt.show()
+
+plt.figure(figsize=(10, 8))
+for model_name, data in roc_data.items():
+    max_idx = np.argmax(data["auc"])
+    fpr = data["fpr"][max_idx]
+    tpr = data["tpr"][max_idx]
+    roc_auc = data["auc"][max_idx]
+    plt.plot(fpr, tpr, label=f'{model_name} (Max AUC = {roc_auc:.4f})')
+
+plt.plot([0, 1], [0, 1], 'k--', label='Random Guess')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curves (Max AUC)')
+plt.legend(loc='lower right')
+plt.savefig(f'{file_path}/roc_curves_max.pdf')
+plt.show()
